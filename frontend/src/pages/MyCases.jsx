@@ -1,418 +1,473 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  ChevronRight, FilePlus2, Plus, Sparkles, ClipboardList,
+  TrendingUp, Clock, Zap, Shield, AlertCircle, CheckCircle2,
+  Loader2, Search,
+} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../components/DashboardLayout'
-import {
-  Gavel, IndianRupee, TrendingUp, Plus, Filter,
-  ChevronRight, Clock, CheckCircle, AlertTriangle, XCircle,
-  Eye, FileText, MoreHorizontal, Zap, ArrowUpRight
-} from 'lucide-react'
+import { getErrorMessage, listCases } from '../lib/api'
 
-const CASES = [
-  {
-    id: 'CK-90428',
-    product: 'boAt Airdopes 141 ANC',
-    platform: 'Amazon',
-    amount: '₹2,499',
-    status: 'ready',
-    strength: 86,
-    date: '2 hours ago',
-    category: 'Electronics',
-    defect: 'Fractured Casing',
-    statutoryGround: 'Section 2(9) CPA 2019',
-    evidence: 3,
-  },
-  {
-    id: 'CK-88201',
-    product: 'Samsung Galaxy M34 5G',
-    platform: 'Flipkart',
-    amount: '₹18,999',
-    status: 'sent',
-    strength: 92,
-    date: '3 days ago',
-    category: 'Electronics',
-    defect: 'Battery Drain',
-    statutoryGround: 'Section 2(9) CPA 2019',
-    evidence: 5,
-  },
-  {
-    id: 'CK-85110',
-    product: 'Prestige Induction Cooktop',
-    platform: 'Meesho',
-    amount: '₹6,200',
-    status: 'sent',
-    strength: 79,
-    date: '1 week ago',
-    category: 'Home Appliances',
-    defect: 'No power on delivery',
-    statutoryGround: 'Section 2(9) CPA 2019',
-    evidence: 4,
-  },
-  {
-    id: 'CK-81003',
-    product: 'Puma Sports Shoes',
-    platform: 'Myntra',
-    amount: '₹4,500',
-    status: 'in-progress',
-    strength: 71,
-    date: '2 weeks ago',
-    category: 'Footwear',
-    defect: 'Sole separation within 2 days',
-    statutoryGround: 'Section 2(9) CPA 2019',
-    evidence: 2,
-  },
-]
-
-const STATUS_CONFIG = {
-  ready: {
-    label: 'Ready to Send',
-    color: '#84CC16',
-    bg: 'rgba(132,204,22,0.1)',
-    border: 'rgba(132,204,22,0.25)',
-    icon: CheckCircle,
-  },
-  sent: {
-    label: 'Notice Sent',
-    color: '#22C55E',
-    bg: 'rgba(34,197,94,0.1)',
-    border: 'rgba(34,197,94,0.25)',
-    icon: CheckCircle,
-  },
-  'in-progress': {
-    label: 'In Progress',
-    color: '#F59E0B',
-    bg: 'rgba(245,158,11,0.1)',
-    border: 'rgba(245,158,11,0.25)',
-    icon: Clock,
-  },
-  escalated: {
-    label: 'Escalated to NCH',
-    color: '#EF4444',
-    bg: 'rgba(239,68,68,0.1)',
-    border: 'rgba(239,68,68,0.25)',
-    icon: AlertTriangle,
-  },
+/* ─── Status config ─────────────────────────────────────────────────────── */
+const STATUS = {
+  uploaded:  { label: 'Evidence received',       tone: '#84CC16', bg: 'rgba(132,204,22,0.12)',  icon: Shield,       next: 'Start AI analysis' },
+  analyzing: { label: 'AI analysis in progress', tone: '#60A5FA', bg: 'rgba(96,165,250,0.12)',  icon: Loader2,      next: 'View analysis' },
+  review:    { label: 'Ready for review',         tone: '#FBBF24', bg: 'rgba(251,191,36,0.12)',  icon: Clock,        next: 'Review claim' },
+  approved:  { label: 'Notice ready',             tone: '#A78BFA', bg: 'rgba(167,139,250,0.12)', icon: CheckCircle2, next: 'Open notice' },
+  done:      { label: 'Resolved',                 tone: '#22C55E', bg: 'rgba(34,197,94,0.12)',   icon: CheckCircle2, next: 'View result' },
+  error:     { label: 'Needs attention',          tone: '#F87171', bg: 'rgba(248,113,113,0.12)', icon: AlertCircle,  next: 'Review issue' },
 }
 
-const FILTERS = ['All', 'Ready', 'Sent', 'In Progress']
+function caseRoute(item) {
+  if (item.status === 'uploaded' || item.status === 'analyzing') return `/cases/${item.id}/analyze`
+  if (item.status === 'review') return `/cases/${item.id}/review`
+  return `/cases/${item.id}/result`
+}
 
-function StatusPill({ status }) {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG['in-progress']
-  const Icon = cfg.icon
+function displayDate(value) {
+  return value
+    ? new Date(value).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : 'Recently added'
+}
+
+/* ─── Main page ─────────────────────────────────────────────────────────── */
+export default function MyCases() {
+  const navigate = useNavigate()
+  const [cases, setCases]     = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
+  const [search, setSearch]   = useState('')
+
+  useEffect(() => {
+    listCases()
+      .then(setCases)
+      .catch((err) => setError(getErrorMessage(err)))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const activeCount = useMemo(
+    () => cases.filter((c) => !['done', 'error'].includes(c.status)).length,
+    [cases],
+  )
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return cases
+    const q = search.toLowerCase()
+    return cases.filter(
+      (c) =>
+        (c.product || '').toLowerCase().includes(q) ||
+        (c.defect_type || '').toLowerCase().includes(q) ||
+        (c.status || '').toLowerCase().includes(q),
+    )
+  }, [cases, search])
+
   return (
-    <span
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
-      style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}
+    <DashboardLayout
+      activeView="cases"
+      title="Case dossiers"
+      subtitle="Manage every consumer claim from evidence to resolution"
     >
-      <Icon size={11} />
-      {cfg.label}
-    </span>
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+
+        {/* ── Header ── */}
+        <header className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="animate-float-up">
+            <p
+              className="mb-2 flex items-center gap-1.5 font-mono-ck text-[10px] uppercase tracking-[0.18em]"
+              style={{ color: '#84CC16' }}
+            >
+              <ClipboardList size={11} />
+              Claim Workspace
+            </p>
+            <h1
+              className="font-jakarta font-extrabold leading-tight sm:text-[34px]"
+              style={{ color: '#E8EAF6', fontSize: '28px', letterSpacing: '-0.02em' }}
+            >
+              Your case dossiers
+            </h1>
+            <p className="mt-2 text-sm leading-relaxed" style={{ color: '#6B7280' }}>
+              Track evidence, legal analysis, and merchant action in one place.
+            </p>
+          </div>
+
+          <button
+            onClick={() => navigate('/new')}
+            className="flex h-11 items-center justify-center gap-2 self-start rounded-2xl px-6 text-sm font-bold transition-all active:scale-95 sm:self-auto"
+            style={{
+              background: 'linear-gradient(135deg, #84CC16, #65A300)',
+              color: '#0B0D11',
+              boxShadow: '0 8px 28px rgba(132,204,22,0.30)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.boxShadow = '0 12px 36px rgba(132,204,22,0.45)'
+              e.currentTarget.style.transform = 'translateY(-1px)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.boxShadow = '0 8px 28px rgba(132,204,22,0.30)'
+              e.currentTarget.style.transform = 'translateY(0)'
+            }}
+          >
+            <Plus size={17} strokeWidth={3} />
+            New claim
+          </button>
+        </header>
+
+        {/* ── Metric cards ── */}
+        <section className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <MetricCard
+            label="Total dossiers"
+            value={cases.length}
+            detail="Claims in your workspace"
+            icon={ClipboardList}
+          />
+          <MetricCard
+            label="Active claims"
+            value={activeCount}
+            detail="Evidence or action underway"
+            icon={TrendingUp}
+          />
+          <MetricCard
+            label="Next action"
+            value={cases.length ? 'Review' : 'Start'}
+            detail={cases.length ? 'Continue your strongest case' : 'Add evidence to create your first case'}
+            icon={Zap}
+            emphasis
+          />
+        </section>
+
+        {/* ── All Claims table ── */}
+        <section
+          className="overflow-hidden rounded-3xl"
+          style={{
+            background: 'rgba(22, 25, 33, 0.80)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid rgba(132,204,22,0.10)',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
+          }}
+        >
+          {/* Table header row */}
+          <div
+            className="flex flex-col gap-4 px-6 py-5 sm:flex-row sm:items-center sm:justify-between"
+            style={{ borderBottom: '1px solid rgba(132,204,22,0.08)' }}
+          >
+            <div>
+              <h2 className="font-jakarta text-lg font-bold" style={{ color: '#E8EAF6' }}>
+                All claims
+              </h2>
+              <p className="mt-0.5 text-xs" style={{ color: '#6B7280' }}>
+                {loading
+                  ? 'Loading your dossiers…'
+                  : `${cases.length} claim${cases.length === 1 ? '' : 's'} in your workspace`}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Live search */}
+              {!loading && cases.length > 0 && (
+                <div
+                  className="flex items-center gap-2 rounded-xl px-3 py-2"
+                  style={{ background: 'rgba(28,32,48,0.8)', border: '1px solid rgba(132,204,22,0.10)' }}
+                >
+                  <Search size={13} style={{ color: '#6B7280' }} />
+                  <input
+                    type="text"
+                    placeholder="Search claims…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="bg-transparent text-xs outline-none placeholder:text-[#4a5070]"
+                    style={{ color: '#E8EAF6', width: '130px' }}
+                  />
+                </div>
+              )}
+
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-mono-ck text-[10px]"
+                style={{
+                  background: 'rgba(132,204,22,0.08)',
+                  color: '#84CC16',
+                  border: '1px solid rgba(132,204,22,0.15)',
+                }}
+              >
+                <Sparkles size={11} />
+                AI-READY DOSSIERS
+              </span>
+            </div>
+          </div>
+
+          {/* Body states */}
+          {loading && <LoadingSkeleton />}
+          {error && <ErrorState error={error} />}
+          {!loading && !error && cases.length === 0 && <EmptyState onCreate={() => navigate('/new')} />}
+
+          {!loading && !error && cases.length > 0 && (
+            <div>
+              {filtered.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-14 text-center">
+                  <Search size={22} style={{ color: '#4a5070' }} />
+                  <p className="text-sm" style={{ color: '#6B7280' }}>
+                    No claims match{' '}
+                    <span style={{ color: '#84CC16' }}>"{search}"</span>
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y" style={{ borderColor: 'rgba(132,204,22,0.06)' }}>
+                  {filtered.map((item, i) => (
+                    <CaseRow
+                      key={item.id}
+                      item={item}
+                      index={i}
+                      onClick={() => navigate(caseRoute(item))}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    </DashboardLayout>
   )
 }
 
-function StrengthBar({ value }) {
-  const color = value >= 80 ? '#84CC16' : value >= 60 ? '#F59E0B' : '#EF4444'
+/* ─── Metric card ────────────────────────────────────────────────────────── */
+function MetricCard({ label, value, detail, icon: Icon, emphasis = false }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 rounded-full" style={{ background: 'rgba(132,204,22,0.1)' }}>
+    <article
+      className="group relative overflow-hidden rounded-2xl p-5 transition-transform hover:-translate-y-0.5"
+      style={{
+        background: emphasis
+          ? 'linear-gradient(145deg, rgba(132,204,22,0.10) 0%, rgba(22,25,33,0.95) 100%)'
+          : 'rgba(22,25,33,0.80)',
+        border: emphasis
+          ? '1px solid rgba(132,204,22,0.22)'
+          : '1px solid rgba(132,204,22,0.08)',
+        boxShadow: emphasis
+          ? '0 8px 32px rgba(132,204,22,0.08)'
+          : '0 4px 16px rgba(0,0,0,0.20)',
+        backdropFilter: 'blur(16px)',
+      }}
+    >
+      {/* Subtle corner glow for emphasis card */}
+      {emphasis && (
         <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${value}%`, background: color }}
+          className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full opacity-20"
+          style={{ background: 'radial-gradient(circle, #84CC16, transparent)' }}
         />
+      )}
+
+      <div className="mb-3 flex items-center justify-between">
+        <p className="font-mono-ck text-[10px] uppercase tracking-widest" style={{ color: '#6B7280' }}>
+          {label}
+        </p>
+        <div
+          className="flex h-7 w-7 items-center justify-center rounded-lg"
+          style={{
+            background: emphasis ? 'rgba(132,204,22,0.15)' : 'rgba(28,32,48,0.8)',
+            color: emphasis ? '#84CC16' : '#4a5070',
+          }}
+        >
+          <Icon size={14} />
+        </div>
       </div>
-      <span className="font-mono-ck text-xs font-bold" style={{ color, minWidth: '30px' }}>{value}</span>
+
+      <p
+        className="font-jakarta font-extrabold leading-none"
+        style={{ color: emphasis ? '#84CC16' : '#E8EAF6', fontSize: '36px', letterSpacing: '-0.02em' }}
+      >
+        {value}
+      </p>
+      <p className="mt-2.5 text-xs leading-relaxed" style={{ color: emphasis ? '#9196B0' : '#84CC16' }}>
+        {detail}
+      </p>
+    </article>
+  )
+}
+
+/* ─── Case row ───────────────────────────────────────────────────────────── */
+function CaseRow({ item, onClick, index }) {
+  const config     = STATUS[item.status] || STATUS.uploaded
+  const StatusIcon = config.icon
+  const product    = item.product || item.case_file?.product?.value || 'Untitled consumer claim'
+  const defect     = item.defect_type || item.case_file?.defect_type?.value || 'Evidence submitted for review'
+
+  return (
+    <button
+      onClick={onClick}
+      className="group flex w-full flex-col gap-4 px-6 py-5 text-left transition-all duration-200 sm:flex-row sm:items-center"
+      style={{ color: '#E8EAF6' }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(132,204,22,0.035)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+    >
+      {/* Product icon */}
+      <div
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-transform group-hover:scale-105"
+        style={{ background: config.bg, color: config.tone }}
+      >
+        <FilePlus2 size={19} />
+      </div>
+
+      {/* Main info */}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono-ck text-[10px] font-medium"
+            style={{ background: config.bg, color: config.tone }}
+          >
+            <StatusIcon
+              size={10}
+              className={item.status === 'analyzing' ? 'animate-spin' : ''}
+            />
+            {config.label}
+          </span>
+          <span className="font-mono-ck text-[10px]" style={{ color: '#4a5070' }}>
+            #{item.id?.slice(0, 8)}
+          </span>
+          {item.score != null && (
+            <span
+              className="rounded-full px-2 py-0.5 font-mono-ck text-[10px] font-bold"
+              style={{ background: 'rgba(132,204,22,0.10)', color: '#84CC16' }}
+            >
+              SCORE {item.score}
+            </span>
+          )}
+        </div>
+
+        <h3
+          className="mt-2 truncate font-bold sm:text-[15px]"
+          style={{ fontSize: '14px', letterSpacing: '-0.01em' }}
+        >
+          {product}
+        </h3>
+        <p className="mt-1 truncate text-xs" style={{ color: '#6B7280' }}>
+          {defect}
+        </p>
+      </div>
+
+      {/* Date + CTA */}
+      <div className="flex items-center justify-between gap-4 sm:justify-end">
+        <div className="text-left sm:text-right">
+          <p className="text-xs" style={{ color: '#4a5070' }}>
+            {displayDate(item.created_at)}
+          </p>
+          <p className="mt-1 text-xs font-semibold" style={{ color: '#84CC16' }}>
+            {config.next}
+          </p>
+        </div>
+
+        <span
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 group-hover:translate-x-0.5"
+          style={{
+            background: 'rgba(28,32,48,0.8)',
+            color: '#84CC16',
+            border: '1px solid rgba(132,204,22,0.12)',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 0 12px rgba(132,204,22,0.25)' }}
+          onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none' }}
+        >
+          <ChevronRight size={15} />
+        </span>
+      </div>
+    </button>
+  )
+}
+
+/* ─── Loading skeleton ───────────────────────────────────────────────────── */
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-2 p-5">
+      {[1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="flex items-center gap-4 rounded-2xl p-5"
+          style={{ background: 'rgba(28,32,48,0.5)' }}
+        >
+          <div className="h-11 w-11 animate-pulse rounded-2xl" style={{ background: '#1C2030' }} />
+          <div className="flex-1 space-y-2">
+            <div className="h-3 w-24 animate-pulse rounded-full" style={{ background: '#1C2030' }} />
+            <div className="h-4 w-56 animate-pulse rounded-full" style={{ background: '#1C2030' }} />
+            <div className="h-3 w-40 animate-pulse rounded-full" style={{ background: '#1C2030' }} />
+          </div>
+          <div className="h-8 w-8 animate-pulse rounded-xl" style={{ background: '#1C2030' }} />
+        </div>
+      ))}
     </div>
   )
 }
 
-export default function MyCases() {
-  const navigate = useNavigate()
-  const [activeFilter, setActiveFilter] = useState('All')
-  const [hoveredCase, setHoveredCase] = useState(null)
-
-  const filtered = activeFilter === 'All'
-    ? CASES
-    : CASES.filter(c => STATUS_CONFIG[c.status]?.label.toLowerCase().includes(activeFilter.toLowerCase()))
-
-  const totalAmount = '₹38,400'
-  const avgStrength = Math.round(CASES.reduce((a, c) => a + c.strength, 0) / CASES.length)
-
+/* ─── Error state ────────────────────────────────────────────────────────── */
+function ErrorState({ error }) {
   return (
-    <DashboardLayout
-      title="My Cases"
-      subtitle="Track, manage and dispatch your AI-powered consumer disputes"
+    <div
+      className="m-6 flex items-start gap-4 rounded-2xl p-5"
+      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.20)' }}
     >
-      <div className="p-6 space-y-6 max-w-7xl mx-auto">
-
-        {/* ─── KPI CARDS ─── */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[
-            {
-              icon: Gavel,
-              label: 'Total Claims',
-              value: `${CASES.length}`,
-              sub: 'dossiers logged',
-              badge: '+1 this week',
-              badgeColor: '#84CC16',
-              iconBg: 'rgba(132,204,22,0.1)',
-              iconColor: '#84CC16',
-            },
-            {
-              icon: IndianRupee,
-              label: 'Complaints Sent',
-              value: '3',
-              sub: `• ${totalAmount}`,
-              badge: '100% payout rate',
-              badgeColor: '#22C55E',
-              iconBg: 'rgba(34,197,94,0.1)',
-              iconColor: '#22C55E',
-            },
-            {
-              icon: TrendingUp,
-              label: 'Avg Claim Strength',
-              value: avgStrength.toString(),
-              sub: '/ 100',
-              badge: 'High win probability',
-              badgeColor: '#84CC16',
-              iconBg: 'rgba(132,204,22,0.08)',
-              iconColor: '#65A300',
-            },
-          ].map((stat) => {
-            const Icon = stat.icon
-            return (
-              <div
-                key={stat.label}
-                className="relative overflow-hidden p-5 rounded-2xl flex flex-col justify-between"
-                style={{
-                  background: '#161921',
-                  border: '1px solid rgba(132,204,22,0.08)',
-                  minHeight: '150px',
-                }}
-              >
-                <div className="absolute -right-6 -top-6 w-24 h-24 rounded-full blur-2xl"
-                  style={{ background: `${stat.badgeColor}10` }} />
-                <div className="flex items-start justify-between">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ background: stat.iconBg }}
-                  >
-                    <Icon size={20} style={{ color: stat.iconColor }} />
-                  </div>
-                  <span
-                    className="text-xs px-2.5 py-1 rounded-full font-medium"
-                    style={{
-                      background: `${stat.badgeColor}15`,
-                      color: stat.badgeColor,
-                      border: `1px solid ${stat.badgeColor}30`,
-                    }}
-                  >
-                    {stat.badge}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-xs" style={{ color: '#9196B0' }}>{stat.label}</p>
-                  <div className="flex items-baseline gap-2 mt-1">
-                    <h3 className="font-jakarta font-extrabold text-4xl" style={{ color: '#E8EAF6', lineHeight: 1 }}>
-                      {stat.value}
-                    </h3>
-                    <span className="font-mono-ck text-sm" style={{ color: '#9196B0' }}>{stat.sub}</span>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* ─── FILTER ROW ─── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f}
-                onClick={() => setActiveFilter(f)}
-                className="px-4 h-9 rounded-full text-sm font-semibold transition-all"
-                style={{
-                  background: activeFilter === f ? 'linear-gradient(135deg, #84CC16, #65A300)' : 'rgba(28,32,48,0.8)',
-                  color: activeFilter === f ? '#0B0D11' : '#9196B0',
-                  border: activeFilter === f ? 'none' : '1px solid rgba(132,204,22,0.1)',
-                }}
-              >
-                {f}
-                {f === 'All' && (
-                  <span
-                    className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full"
-                    style={{
-                      background: activeFilter === f ? 'rgba(0,0,0,0.2)' : 'rgba(132,204,22,0.1)',
-                      color: activeFilter === f ? '#0B0D11' : '#84CC16',
-                    }}
-                  >
-                    {CASES.length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-          <button
-            className="flex items-center gap-2 px-4 h-9 rounded-xl text-sm font-medium"
-            style={{
-              background: 'rgba(28,32,48,0.8)',
-              border: '1px solid rgba(132,204,22,0.1)',
-              color: '#9196B0',
-            }}
-          >
-            <Filter size={14} />
-            Filter & Sort
-          </button>
-        </div>
-
-        {/* ─── CASES TABLE ─── */}
-        <div
-          className="rounded-2xl overflow-hidden"
-          style={{ background: '#161921', border: '1px solid rgba(132,204,22,0.08)' }}
+      <AlertCircle size={20} style={{ color: '#F87171', flexShrink: 0, marginTop: '2px' }} />
+      <div className="flex-1">
+        <p className="font-semibold" style={{ color: '#FCA5A5' }}>
+          We couldn't load your dossiers.
+        </p>
+        <p className="mt-1 text-sm" style={{ color: '#F87171' }}>
+          {error}
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
+          style={{ background: '#252A38', color: '#E8EAF6', border: '1px solid rgba(255,255,255,0.06)' }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#2e3447' }}
+          onMouseLeave={e => { e.currentTarget.style.background = '#252A38' }}
         >
-          {/* Table header */}
-          <div
-            className="grid gap-4 px-5 py-3 text-[10px] font-bold uppercase tracking-widest"
-            style={{
-              color: '#4a5070',
-              borderBottom: '1px solid rgba(132,204,22,0.06)',
-              gridTemplateColumns: '1fr 1fr 100px 120px 120px 80px',
-            }}
-          >
-            <span>Case / Product</span>
-            <span>Defect & Ground</span>
-            <span>Evidence</span>
-            <span>Claim Strength</span>
-            <span>Status</span>
-            <span>Actions</span>
-          </div>
-
-          {/* Cases */}
-          {filtered.map((c) => (
-            <div
-              key={c.id}
-              className="grid gap-4 px-5 py-4 items-center cursor-pointer transition-all"
-              style={{
-                gridTemplateColumns: '1fr 1fr 100px 120px 120px 80px',
-                borderBottom: '1px solid rgba(132,204,22,0.04)',
-                background: hoveredCase === c.id ? 'rgba(132,204,22,0.03)' : 'transparent',
-              }}
-              onMouseEnter={() => setHoveredCase(c.id)}
-              onMouseLeave={() => setHoveredCase(null)}
-              onClick={() => navigate(`/cases/${c.id}/review`)}
-            >
-              {/* Product info */}
-              <div className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono-ck text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ background: 'rgba(132,204,22,0.08)', color: '#84CC16' }}>
-                    #{c.id}
-                  </span>
-                  <span className="text-[10px]" style={{ color: '#6B7280' }}>{c.date}</span>
-                </div>
-                <p className="font-semibold text-sm" style={{ color: '#E8EAF6' }}>{c.product}</p>
-                <p className="text-xs" style={{ color: '#6B7280' }}>{c.platform} · {c.category} · {c.amount}</p>
-              </div>
-
-              {/* Defect */}
-              <div className="flex flex-col gap-0.5">
-                <p className="text-sm font-medium" style={{ color: '#E8EAF6' }}>{c.defect}</p>
-                <p className="text-[10px] font-mono-ck" style={{ color: '#65A300' }}>{c.statutoryGround}</p>
-              </div>
-
-              {/* Evidence count */}
-              <div className="flex items-center gap-1.5">
-                <FileText size={14} style={{ color: '#9196B0' }} />
-                <span className="text-sm font-semibold font-mono-ck" style={{ color: '#E8EAF6' }}>{c.evidence}</span>
-                <span className="text-xs" style={{ color: '#6B7280' }}>files</span>
-              </div>
-
-              {/* Strength */}
-              <div className="w-28">
-                <StrengthBar value={c.strength} />
-              </div>
-
-              {/* Status */}
-              <StatusPill status={c.status} />
-
-              {/* Actions */}
-              <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
-                  style={{ background: 'rgba(28,32,48,0.8)', color: '#9196B0', border: '1px solid rgba(132,204,22,0.08)' }}
-                  onClick={() => navigate(`/cases/${c.id}/review`)}
-                >
-                  <Eye size={14} />
-                </button>
-                <button
-                  className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
-                  style={{ background: 'rgba(28,32,48,0.8)', color: '#9196B0', border: '1px solid rgba(132,204,22,0.08)' }}
-                >
-                  <MoreHorizontal size={14} />
-                </button>
-              </div>
-            </div>
-          ))}
-
-          {/* New claim row */}
-          <div
-            className="flex items-center justify-between px-5 py-4 cursor-pointer transition-all"
-            style={{ borderTop: '1px solid rgba(132,204,22,0.06)' }}
-            onClick={() => navigate('/new')}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className="w-8 h-8 rounded-xl flex items-center justify-center"
-                style={{ background: 'rgba(132,204,22,0.08)', border: '1px dashed rgba(132,204,22,0.3)' }}
-              >
-                <Plus size={16} style={{ color: '#84CC16' }} />
-              </div>
-              <span className="text-sm font-medium" style={{ color: '#84CC16' }}>
-                Start a new claim
-              </span>
-            </div>
-            <ArrowUpRight size={16} style={{ color: '#84CC16' }} />
-          </div>
-        </div>
-
-        {/* ─── AI BANNER ─── */}
-        <div
-          className="flex items-center justify-between p-5 rounded-2xl"
-          style={{
-            background: 'linear-gradient(135deg, rgba(132,204,22,0.06) 0%, rgba(101,163,0,0.04) 100%)',
-            border: '1px solid rgba(132,204,22,0.15)',
-          }}
-        >
-          <div className="flex items-center gap-4">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{ background: 'linear-gradient(135deg, #84CC16, #65A300)' }}
-            >
-              <Zap size={18} color="#0B0D11" fill="currentColor" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm" style={{ color: '#E8EAF6' }}>
-                AI Auto-Extraction is Active
-              </p>
-              <p className="text-xs" style={{ color: '#9196B0' }}>
-                Your new claims are automatically classified and matched under CPA 2019
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => navigate('/new')}
-            className="flex items-center gap-2 px-5 h-10 rounded-xl font-semibold text-sm transition-all active:scale-95"
-            style={{
-              background: 'linear-gradient(135deg, #84CC16, #65A300)',
-              color: '#0B0D11',
-              boxShadow: '0 4px 16px rgba(132,204,22,0.25)',
-            }}
-          >
-            <Plus size={15} strokeWidth={2.5} />
-            New Claim
-          </button>
-        </div>
-
+          Try again
+        </button>
       </div>
-    </DashboardLayout>
+    </div>
+  )
+}
+
+/* ─── Empty state ────────────────────────────────────────────────────────── */
+function EmptyState({ onCreate }) {
+  return (
+    <div className="flex flex-col items-center px-6 py-20 text-center">
+      <div
+        className="relative flex h-20 w-20 items-center justify-center rounded-3xl"
+        style={{ background: 'rgba(132,204,22,0.10)', border: '1px solid rgba(132,204,22,0.15)' }}
+      >
+        <div
+          className="absolute inset-0 rounded-3xl opacity-30"
+          style={{ boxShadow: '0 0 40px rgba(132,204,22,0.3)' }}
+        />
+        <FilePlus2 size={32} style={{ color: '#84CC16' }} />
+      </div>
+
+      <h3
+        className="mt-6 font-jakarta text-xl font-bold"
+        style={{ color: '#E8EAF6', letterSpacing: '-0.01em' }}
+      >
+        Your dossier workspace is ready.
+      </h3>
+      <p className="mt-2 max-w-xs text-sm leading-6" style={{ color: '#6B7280' }}>
+        Create a claim to add your evidence, run the AI assessment, and prepare your legal notice.
+      </p>
+
+      <button
+        onClick={onCreate}
+        className="mt-7 flex h-11 items-center gap-2 rounded-2xl px-6 text-sm font-bold transition-all active:scale-95"
+        style={{
+          background: 'linear-gradient(135deg, #84CC16, #65A300)',
+          color: '#0B0D11',
+          boxShadow: '0 8px 28px rgba(132,204,22,0.28)',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.boxShadow = '0 12px 36px rgba(132,204,22,0.45)'
+          e.currentTarget.style.transform = 'translateY(-1px)'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.boxShadow = '0 8px 28px rgba(132,204,22,0.28)'
+          e.currentTarget.style.transform = 'translateY(0)'
+        }}
+      >
+        <Plus size={16} strokeWidth={3} />
+        Create your first claim
+      </button>
+    </div>
   )
 }
