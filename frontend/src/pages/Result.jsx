@@ -1,196 +1,373 @@
-import { useNavigate } from 'react-router-dom'
-import DashboardLayout from '../components/DashboardLayout'
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { openSSE } from '../lib/sse'
+import ScoreGauge from '../components/ScoreGauge'
+import FlagList from '../components/FlagList'
+import ActionMenu from '../components/ActionMenu'
+import BackButton from '../components/BackButton'
 import {
-  CheckCircle, Share2, Download, ArrowLeft, Zap,
-  Shield, Clock, TrendingUp, IndianRupee
+  CheckCircle2, Target, CalendarDays, RefreshCw, ShieldCheck,
+  FileText, Flag, Zap, ArrowLeft, ArrowRight, Loader2, AlertCircle,
 } from 'lucide-react'
 
-const NEXT_STEPS = [
-  {
-    icon: Clock,
-    title: 'Merchant Response Window',
-    desc: "Amazon has 15 business days to respond. We'll notify you immediately.",
-    color: '#F59E0B',
-  },
-  {
-    icon: TrendingUp,
-    title: 'Track Progress',
-    desc: 'Monitor your case status in real-time from your Case Dossiers dashboard.',
-    color: '#84CC16',
-  },
-  {
-    icon: Shield,
-    title: 'Auto-Escalation Ready',
-    desc: "If unanswered, we'll auto-prepare your NCH Forum filing under Section 35.",
-    color: '#8B5CF6',
-  },
-]
+const ROUTE_LABELS = {
+  return:            'Return & Refund',
+  replacement:       'Replacement',
+  warranty:          'Warranty Claim',
+  consumer_helpline: 'Consumer Helpline',
+}
+
+/* ── Step pill colours ────────────────────────────────────────────────────── */
+function stepStyle(status) {
+  if (status === 'done')    return { dot: '#84CC16',  text: '#84CC16',  bg: 'rgba(132,204,22,0.10)' }
+  if (status === 'running') return { dot: '#60A5FA',  text: '#60A5FA',  bg: 'rgba(96,165,250,0.10)' }
+  if (status === 'error')   return { dot: '#F87171',  text: '#F87171',  bg: 'rgba(248,113,113,0.10)' }
+  return                           { dot: '#4a5070',  text: '#6B7280',  bg: 'rgba(28,32,48,0.6)' }
+}
+
+/* ── Section card wrapper ─────────────────────────────────────────────────── */
+function Card({ children, className = '' }) {
+  return (
+    <div
+      className={`rounded-2xl p-6 ${className}`}
+      style={{
+        background: 'rgba(22,25,33,0.80)',
+        border: '1px solid rgba(132,204,22,0.09)',
+        backdropFilter: 'blur(16px)',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.25)',
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+/* ── Section heading ──────────────────────────────────────────────────────── */
+function SectionTitle({ icon: Icon, children }) {
+  return (
+    <div className="mb-5 flex items-center gap-2.5">
+      <div
+        className="flex h-7 w-7 items-center justify-center rounded-lg"
+        style={{ background: 'rgba(132,204,22,0.12)', color: '#84CC16' }}
+      >
+        <Icon size={14} />
+      </div>
+      <h2 className="font-jakarta text-sm font-bold uppercase tracking-widest" style={{ color: '#9196B0' }}>
+        {children}
+      </h2>
+    </div>
+  )
+}
 
 export default function Result() {
+  const { id } = useParams()
   const navigate = useNavigate()
 
-  return (
-    <DashboardLayout title="Notice Sent" subtitle="Your legal notice has been dispatched">
-      <div className="p-6 max-w-4xl mx-auto space-y-6">
+  const [run, setRun]             = useState(null)
+  const [steps, setSteps]         = useState({ verify: 'pending', score: 'pending', draft: 'pending' })
+  const [streamError, setStreamError] = useState(null)
 
-        {/* ─── SUCCESS HERO ─── */}
-        <div
-          className="flex flex-col items-center justify-center text-center py-14 px-6 rounded-3xl relative overflow-hidden"
-          style={{ background: '#161921', border: '1px solid rgba(132,204,22,0.12)' }}
-        >
-          {/* Glow */}
-          <div className="pointer-events-none absolute inset-0"
-            style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(132,204,22,0.08) 0%, transparent 70%)' }} />
+  useEffect(() => {
+    let closed = false
+    const cleanup = openSSE(`/cases/${id}/run`, {
+      onEvent(event) {
+        if (closed) return
+        if (event.type === 'step')     setSteps((s) => ({ ...s, [event.step]: event.status }))
+        else if (event.type === 'complete') setRun(event)
+        else if (event.type === 'error')    setStreamError(event.message || 'Verification failed')
+      },
+      onError(err) { if (!closed) setStreamError(err?.message || 'Stream error') },
+    })
+    return () => { closed = true; cleanup?.() }
+  }, [id])
 
-          {/* Confetti dots */}
-          {[...Array(12)].map((_, i) => (
-            <div
-              key={i}
-              className="absolute w-1.5 h-1.5 rounded-full"
-              style={{
-                background: i % 3 === 0 ? '#84CC16' : i % 3 === 1 ? '#65A300' : '#22C55E',
-                top: `${Math.random() * 80}%`,
-                left: `${Math.random() * 100}%`,
-                opacity: 0.4,
-              }}
-            />
-          ))}
+  const loading = !run && !streamError
+  const score   = run?.score?.score   ?? 0
+  const label   = run?.score?.label   ?? ''
+  const reasons = run?.score?.reasons ?? []
+  const route   = run?.score?.route
+  const flags   = run?.verify?.flags  ?? []
+  const verify  = run?.verify         ?? {}
+  const draft   = run?.draft          ?? {}
 
+  /* ── Loading screen ── */
+  if (loading) {
+    return (
+      <div
+        className="flex min-h-screen flex-col items-center justify-center gap-8 px-4"
+        style={{ background: '#0B0D11' }}
+      >
+        {/* Spinner */}
+        <div className="relative flex h-20 w-20 items-center justify-center">
           <div
-            className="w-20 h-20 rounded-3xl flex items-center justify-center mb-6 relative z-10"
+            className="absolute inset-0 rounded-full opacity-20"
+            style={{ boxShadow: '0 0 48px rgba(132,204,22,0.6)' }}
+          />
+          <Loader2 size={36} className="animate-spin" style={{ color: '#84CC16' }} />
+        </div>
+
+        <div className="text-center">
+          <p className="font-jakarta text-base font-semibold" style={{ color: '#E8EAF6' }}>
+            Running AI verification & drafting…
+          </p>
+          <p className="mt-1 text-sm" style={{ color: '#6B7280' }}>
+            This takes about 10–20 seconds. Hold tight.
+          </p>
+        </div>
+
+        {/* Step pills */}
+        <div
+          className="flex flex-wrap justify-center gap-3 rounded-2xl p-5"
+          style={{ background: 'rgba(22,25,33,0.8)', border: '1px solid rgba(132,204,22,0.09)' }}
+        >
+          {['verify', 'score', 'draft'].map((s) => {
+            const st = stepStyle(steps[s])
+            return (
+              <div
+                key={s}
+                className="flex items-center gap-2.5 rounded-full px-4 py-2"
+                style={{ background: st.bg }}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${steps[s] === 'running' ? 'animate-pulse' : ''}`}
+                  style={{ background: st.dot }}
+                />
+                <span className="font-mono-ck text-[11px] capitalize" style={{ color: st.text }}>
+                  {s}: {steps[s]}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen px-4 py-10 sm:px-6" style={{ background: '#0B0D11' }}>
+      <div className="mx-auto max-w-3xl space-y-6">
+
+        <BackButton fallback={`/cases/${id}/review`} />
+
+        {/* ── Page header ── */}
+        <div className="animate-float-up">
+          <span
+            className="mb-3 inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-mono-ck text-[11px]"
             style={{
-              background: 'linear-gradient(135deg, #84CC16, #65A300)',
-              boxShadow: '0 12px 48px rgba(132,204,22,0.4)',
+              background: 'rgba(132,204,22,0.10)',
+              border: '1px solid rgba(132,204,22,0.20)',
+              color: '#84CC16',
             }}
           >
-            <CheckCircle size={36} color="#0B0D11" strokeWidth={2.5} />
-          </div>
-
-          <h2 className="font-jakarta font-extrabold text-4xl mb-3 relative z-10"
-            style={{ color: '#E8EAF6', letterSpacing: '-0.03em' }}>
-            Notice Dispatched!
-          </h2>
-          <p className="text-base max-w-md relative z-10" style={{ color: '#9196B0' }}>
-            Your AI-drafted legal notice has been sent to Amazon under Consumer Protection Act 2019.
-            Reference case <span className="font-mono-ck" style={{ color: '#84CC16' }}>CK-90428</span>.
+            <CheckCircle2 size={12} />
+            Claim Report
+          </span>
+          <h1
+            className="font-jakarta text-3xl font-extrabold leading-tight sm:text-4xl"
+            style={{ color: '#E8EAF6', letterSpacing: '-0.02em' }}
+          >
+            Your Claim Results
+          </h1>
+          <p className="mt-2 text-sm" style={{ color: '#6B7280' }}>
+            AI-verified analysis, strength score, and next steps.
           </p>
 
-          {/* Stats row */}
-          <div className="flex flex-wrap items-center justify-center gap-6 mt-8 relative z-10">
-            {[
-              { label: 'Claim Amount', value: '₹2,499', color: '#84CC16' },
-              { label: 'Legal Strength', value: '86/100', color: '#65A300' },
-              { label: 'Response Deadline', value: '15 business days', color: '#22C55E' },
-            ].map((s) => (
-              <div
-                key={s.label}
-                className="flex flex-col items-center px-6 py-4 rounded-2xl"
-                style={{ background: 'rgba(28,32,48,0.8)', border: '1px solid rgba(132,204,22,0.1)' }}
-              >
-                <span className="font-mono-ck font-bold text-xl" style={{ color: s.color }}>{s.value}</span>
-                <span className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{s.label}</span>
+          {streamError && (
+            <div
+              className="mt-4 flex items-start gap-3 rounded-xl p-4"
+              style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.20)' }}
+            >
+              <AlertCircle size={16} style={{ color: '#F87171', flexShrink: 0, marginTop: '1px' }} />
+              <p className="text-sm" style={{ color: '#FCA5A5' }}>{streamError}</p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Recommended route ── */}
+        {route && (
+          <Card>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono-ck text-[10px] uppercase tracking-widest" style={{ color: '#6B7280' }}>
+                  Recommended Route
+                </p>
+                <p className="mt-1.5 font-jakarta text-xl font-bold" style={{ color: '#E8EAF6' }}>
+                  {ROUTE_LABELS[route] || route}
+                </p>
               </div>
-            ))}
-          </div>
+              <div
+                className="flex h-12 w-12 items-center justify-center rounded-2xl"
+                style={{ background: 'rgba(132,204,22,0.12)', color: '#84CC16' }}
+              >
+                <Target size={22} />
+              </div>
+            </div>
+          </Card>
+        )}
 
-          {/* Actions */}
-          <div className="flex flex-wrap items-center justify-center gap-3 mt-8 relative z-10">
-            <button
-              className="flex items-center gap-2 px-5 h-11 rounded-xl font-semibold text-sm transition-all"
-              style={{
-                background: 'rgba(28,32,48,0.8)',
-                border: '1px solid rgba(132,204,22,0.15)',
-                color: '#9196B0',
-              }}
+        {/* ── Verification metrics ── */}
+        <Card>
+          <SectionTitle icon={CalendarDays}>Verification Metrics</SectionTitle>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {/* Days since purchase */}
+            <div
+              className="rounded-xl p-4"
+              style={{ background: 'rgba(28,32,48,0.6)', border: '1px solid rgba(132,204,22,0.06)' }}
             >
-              <Download size={15} />
-              Download Notice PDF
-            </button>
-            <button
-              className="flex items-center gap-2 px-5 h-11 rounded-xl font-semibold text-sm"
-              style={{
-                background: 'rgba(28,32,48,0.8)',
-                border: '1px solid rgba(132,204,22,0.15)',
-                color: '#9196B0',
-              }}
-            >
-              <Share2 size={15} />
-              Share Case Link
-            </button>
-            <button
-              onClick={() => navigate('/cases')}
-              className="flex items-center gap-2 px-6 h-11 rounded-xl font-semibold text-sm transition-all active:scale-95"
-              style={{
-                background: 'linear-gradient(135deg, #84CC16, #65A300)',
-                color: '#0B0D11',
-                boxShadow: '0 4px 16px rgba(132,204,22,0.25)',
-              }}
-            >
-              <ArrowLeft size={15} />
-              Back to Cases
-            </button>
-          </div>
-        </div>
+              <p className="font-mono-ck text-[10px] uppercase tracking-widest" style={{ color: '#6B7280' }}>
+                Days Since Purchase
+              </p>
+              <p className="mt-2 font-jakarta text-2xl font-extrabold" style={{ color: '#E8EAF6' }}>
+                {verify.days_since_purchase ?? '—'}
+              </p>
+            </div>
 
-        {/* ─── WHAT HAPPENS NEXT ─── */}
-        <div
-          className="p-6 rounded-2xl space-y-4"
-          style={{ background: '#161921', border: '1px solid rgba(132,204,22,0.08)' }}
-        >
-          <h3 className="font-jakarta font-bold text-base" style={{ color: '#E8EAF6' }}>
-            What happens next?
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {NEXT_STEPS.map((step) => {
-              const Icon = step.icon
-              return (
-                <div
-                  key={step.title}
-                  className="p-4 rounded-xl flex flex-col gap-3"
-                  style={{ background: 'rgba(28,32,48,0.8)', border: `1px solid ${step.color}15` }}
-                >
-                  <div
-                    className="w-9 h-9 rounded-lg flex items-center justify-center"
-                    style={{ background: `${step.color}15` }}
+            {/* Return window */}
+            <div
+              className="rounded-xl p-4"
+              style={{ background: 'rgba(28,32,48,0.6)', border: '1px solid rgba(132,204,22,0.06)' }}
+            >
+              <p className="font-mono-ck text-[10px] uppercase tracking-widest" style={{ color: '#6B7280' }}>
+                Return Window
+              </p>
+              <p className="mt-2 font-jakarta text-lg font-bold">
+                {verify.within_return_window == null ? (
+                  <span style={{ color: '#4a5070' }}>—</span>
+                ) : verify.within_return_window ? (
+                  <span style={{ color: '#84CC16' }}>✓ Within window</span>
+                ) : (
+                  <span style={{ color: '#F87171' }}>✕ Expired</span>
+                )}
+              </p>
+            </div>
+
+            {/* Warranty */}
+            <div
+              className="rounded-xl p-4"
+              style={{ background: 'rgba(28,32,48,0.6)', border: '1px solid rgba(132,204,22,0.06)' }}
+            >
+              <p className="font-mono-ck text-[10px] uppercase tracking-widest" style={{ color: '#6B7280' }}>
+                Warranty Coverage
+              </p>
+              <p className="mt-2 font-jakarta text-lg font-bold">
+                {verify.within_warranty == null ? (
+                  <span style={{ color: '#4a5070' }}>—</span>
+                ) : verify.within_warranty ? (
+                  <span style={{ color: '#84CC16' }}>✓ Covered</span>
+                ) : (
+                  <span style={{ color: '#F87171' }}>✕ Expired</span>
+                )}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        {/* ── Score gauge ── */}
+        <Card>
+          <SectionTitle icon={Zap}>Claim Strength</SectionTitle>
+          <ScoreGauge score={score} label={label} reasons={reasons} />
+        </Card>
+
+        {/* ── Policy clause ── */}
+        {draft.policy_clause && (
+          <Card>
+            <SectionTitle icon={ShieldCheck}>Applicable Policy Clause</SectionTitle>
+            <div
+              className="rounded-xl p-4 text-sm leading-relaxed"
+              style={{
+                background: 'rgba(132,204,22,0.06)',
+                border: '1px solid rgba(132,204,22,0.14)',
+                color: '#C6D97A',
+                fontStyle: 'italic',
+              }}
+            >
+              "{draft.policy_clause}"
+              {draft.policy_source && (
+                <div className="mt-3 not-italic">
+                  <a
+                    href={draft.policy_source}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono-ck text-[11px] font-medium transition-colors"
+                    style={{ color: '#84CC16' }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#a3e635' }}
+                    onMouseLeave={e => { e.currentTarget.style.color = '#84CC16' }}
                   >
-                    <Icon size={18} style={{ color: step.color }} />
-                  </div>
-                  <h4 className="font-semibold text-sm" style={{ color: '#E8EAF6' }}>{step.title}</h4>
-                  <p className="text-xs leading-relaxed" style={{ color: '#9196B0' }}>{step.desc}</p>
+                    View Policy Source ↗
+                  </a>
                 </div>
-              )
-            })}
-          </div>
-        </div>
+              )}
+            </div>
+          </Card>
+        )}
 
-        {/* ─── NEW CLAIM CTA ─── */}
-        <div
-          className="flex items-center justify-between p-5 rounded-2xl"
-          style={{
-            background: 'rgba(132,204,22,0.04)',
-            border: '1px solid rgba(132,204,22,0.12)',
-          }}
-        >
-          <div>
-            <p className="font-semibold text-sm" style={{ color: '#E8EAF6' }}>Have another defective product?</p>
-            <p className="text-xs mt-0.5" style={{ color: '#9196B0' }}>
-              File another claim — it's free and takes under a minute.
-            </p>
-          </div>
+        {/* ── Draft preview ── */}
+        {draft.body && (
+          <Card>
+            <SectionTitle icon={FileText}>Complaint Draft</SectionTitle>
+            {draft.subject && (
+              <div
+                className="mb-4 rounded-xl px-4 py-3"
+                style={{ background: 'rgba(28,32,48,0.8)', border: '1px solid rgba(132,204,22,0.08)' }}
+              >
+                <span className="font-mono-ck text-[10px] uppercase tracking-widest" style={{ color: '#6B7280' }}>
+                  Subject:{' '}
+                </span>
+                <span className="text-sm font-medium" style={{ color: '#E8EAF6' }}>
+                  {draft.subject}
+                </span>
+              </div>
+            )}
+            <div
+              className="rounded-xl p-5"
+              style={{ background: 'rgba(28,32,48,0.6)', border: '1px solid rgba(132,204,22,0.06)' }}
+            >
+              <pre
+                className="text-sm font-sans leading-relaxed whitespace-pre-wrap"
+                style={{ color: '#C4C9E0' }}
+              >
+                {draft.body}
+              </pre>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Flags ── */}
+        <Card>
+          <SectionTitle icon={Flag}>Verification Flags</SectionTitle>
+          <FlagList flags={flags} />
+        </Card>
+
+        {/* ── Actions ── */}
+        <Card>
+          <SectionTitle icon={Zap}>Take Action</SectionTitle>
+          <ActionMenu caseId={id} draft={draft} caseStatus={run?.status} />
+        </Card>
+
+        {/* ── Bottom nav ── */}
+        <div className="flex items-center justify-between gap-4 pb-4">
           <button
-            onClick={() => navigate('/new')}
-            className="flex items-center gap-2 px-5 h-10 rounded-xl font-semibold text-sm transition-all active:scale-95"
-            style={{
-              background: 'linear-gradient(135deg, #84CC16, #65A300)',
-              color: '#0B0D11',
-              boxShadow: '0 4px 16px rgba(132,204,22,0.2)',
-            }}
+            onClick={() => navigate(`/cases/${id}/review`)}
+            className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium transition-all"
+            style={{ background: 'rgba(28,32,48,0.8)', color: '#9196B0', border: '1px solid rgba(132,204,22,0.08)' }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#E8EAF6'; e.currentTarget.style.borderColor = 'rgba(132,204,22,0.20)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#9196B0'; e.currentTarget.style.borderColor = 'rgba(132,204,22,0.08)' }}
           >
-            <Zap size={14} fill="currentColor" />
-            New Claim
+            <ArrowLeft size={15} />
+            Back to Review
+          </button>
+          <button
+            onClick={() => navigate('/cases')}
+            className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium transition-all"
+            style={{ background: 'rgba(28,32,48,0.8)', color: '#9196B0', border: '1px solid rgba(132,204,22,0.08)' }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#E8EAF6'; e.currentTarget.style.borderColor = 'rgba(132,204,22,0.20)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#9196B0'; e.currentTarget.style.borderColor = 'rgba(132,204,22,0.08)' }}
+          >
+            My Cases
+            <ArrowRight size={15} />
           </button>
         </div>
       </div>
-    </DashboardLayout>
+    </div>
   )
 }
